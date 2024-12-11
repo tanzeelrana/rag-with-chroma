@@ -13,10 +13,13 @@ from werkzeug.utils import secure_filename
 from langchain_community.embeddings import OpenAIEmbeddings # Importing OpenAI embeddings from Langchain
 from langchain_community.chat_models import ChatOpenAI # Import OpenAI LLM
 from langchain_core.prompts import ChatPromptTemplate
-from openai.types import ChatCompletion
+from openai.types.chat import ChatCompletion
 import openai
 import difflib
 import pdfplumber
+
+from openai import OpenAI
+client = OpenAI()
 
 load_dotenv()
 
@@ -140,82 +143,56 @@ def query():
 def extract_text_from_pdf(pdf_path):
     with pdfplumber.open(pdf_path) as pdf:
         return "\n".join(page.extract_text() for page in pdf.pages)
+
+def compare_texts(context):
+    prompt = f"""Compare the following texts and identify differences:
+    {context}
+
+    Highlight added, removed, and modified sections. Response text should be html format."""
     
-def split_text_into_lines(text):
-    return text.splitlines()
-
-def compare_texts(text1, text2):
-    prompt = f"""Compare the following two texts and identify differences:
-    Text 1:
-    {text1}
-
-    Text 2:
-    {text2}
-
-    Highlight added, removed, and modified sections."""
-    
-    response = ChatCompletion.create(
-        model="gpt-3",
-        prompt=prompt,
-        max_tokens=500,  # Adjust as needed
-        temperature=0.7
+    response = client.chat.completions.create(
+        model="gpt-4o",
+        messages=[{"role": "system", "content": prompt}]
     )
     
-    return response['choices'][0]['message']['content']
+    return response.choices[0].message.content
 
-def chunk_and_compare(doc1_lines, doc2_lines):
-    differences = []
-    for line1, line2 in zip(doc1_lines, doc2_lines):
-        diff = compare_texts(line1, line2)
-        differences.append(diff)
-    return differences
-
-def visualize_diff(text1, text2):
-    diff = difflib.unified_diff(
-        text1.splitlines(),
-        text2.splitlines(),
-        lineterm='',
-    )
-    return "\n".join(diff)
-
-def compare_two_documents(pdf1_path, pdf2_path):
-    # Step 1: Extract text
-    text1 = extract_text_from_pdf(pdf1_path)
-    text2 = extract_text_from_pdf(pdf2_path)
-
-    # Step 2: Split into lines
-    lines1 = split_text_into_lines(text1)
-    lines2 = split_text_into_lines(text2)
-
-    # Step 3: Compare and visualize
-    differences = chunk_and_compare(lines1, lines2)
-
-    # Step 4: Print or save the differences
-    differences = []
-    for diff in differences:
-        print(diff)
-        differences.append(diff)
+def compare_documents(file_paths):
     
+    context = ""
+    
+    for i, file_path in enumerate(file_paths):
+        text = extract_text_from_pdf(file_path)
+        context += f"""
+        
+        Text {i}:
+        {text}
+        
+        """
+    
+    differences = compare_texts(context)
     return differences
 
 @app.route('/compare', methods=['POST'])
 def compare():
-    if 'file1' not in request.files or 'file2' not in request.files:
+    file_paths = []
+    
+    if 'files[]' not in request.files:
         return jsonify({"error": "No files part in the request"}), 400
-    file1 = request.files['file1']
-    file2 = request.files['file2']
-    if file1.filename == '' or file2.filename == '':
-        return jsonify({"error": "No selected file"}), 400
-    if file1:
-        file1name = secure_filename(file1.filename)
-        file1_path = os.path.join(UPLOAD_FOLDER, file1name)
-        file1.save(file1_path)
     
-    if file2:
-        file2name = secure_filename(file2.filename)
-        file2_path = os.path.join(UPLOAD_FOLDER, file2name)
-        file2.save(file2_path)
+    files = request.files.getlist('files[]')
+    if not files or all(file.filename == '' for file in files):
+        return jsonify({"error": "No selected files"}), 400
     
-    differences = compare_two_documents(file1_path, file2_path)
+    for file in files:
+        if file and file.filename != '':
+            filename = secure_filename(file.filename)
+            file_path = os.path.join(UPLOAD_FOLDER, filename)
+            file.save(file_path)
+    
+            file_paths.append(file_path)
+    
+    differences = compare_documents(file_paths)
     
     return jsonify({"differences": differences}), 200
+
