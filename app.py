@@ -1,36 +1,34 @@
 from flask import Flask, request, jsonify
 import os
-import shutil
 import numpy as np
 from langchain_community.embeddings import HuggingFaceBgeEmbeddings
-from langchain_community.llms import HuggingFacePipeline
 from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores.chroma import Chroma
-from langchain.chains import RetrievalQA
-from langchain.prompts import PromptTemplate
 from langchain_core.prompts import ChatPromptTemplate
 from dotenv import load_dotenv
-from huggingface_hub import login
 import time
 from langchain_community.document_loaders import PyPDFLoader
 from werkzeug.utils import secure_filename
 from langchain_community.embeddings import OpenAIEmbeddings # Importing OpenAI embeddings from Langchain
 from langchain_community.chat_models import ChatOpenAI # Import OpenAI LLM
 from langchain_core.prompts import ChatPromptTemplate
+import openai
+import difflib
+import pdfplumber
 
 load_dotenv()
 
 app = Flask(__name__)
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+openai.api_key = os.getenv("OPENAI_API_KEY")
 CHROMA_PATH = os.getenv("CHROMA_PATH", "chromaDB")  
 UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "./upload")
 
 PROMPT_TEMPLATE = """
 Use the following pieces of context to answer the question at the end. Please follow the following rules:
-    1. If you don't know the answer, don't try to make up an answer. Just say "I can't find the final answer but you may want to check the following links".
-    2. If you find the answer, write the answer in a concise way with five sentences maximum.
+    1. If you don't know the answer, don't try to make up an answer and don't share the related source document links.
+    2. If you find the answer, write the answer in a concise way with five sentences maximum and also share the related document links.
 {context}
  - -
 Answer the question based on the above context: {question}
@@ -80,28 +78,6 @@ def upload_file():
         
         return jsonify({"message": "File uploaded and processed successfully"}), 200
 
-def initialize_retrieval_qa():
-    db = Chroma(persist_directory=CHROMA_PATH, embedding_function=OpenAIEmbeddings())
-    retriever = db.as_retriever(search_type="similarity", search_kwargs={'k': 3})
-    PROMPT_TEMPLATE = """Use the following pieces of context to answer the question at the end. Please follow the following rules:
-    1. If you don't know the answer, don't try to make up an answer. Just say "I can't find the final answer but you may want to check the following links".
-    2. If you find the answer, write the answer in a concise way with five sentences maximum.
-
-    {context}
-
-    Question: {question}
-
-    Helpful Answer:
-    """
-    PROMPT = PromptTemplate(template=PROMPT_TEMPLATE, input_variables=["context", "question"])
-    return RetrievalQA.from_chain_type(
-        llm=LLM,
-        chain_type="stuff",
-        retriever=retriever,
-        return_source_documents=True,
-        chain_type_kwargs={"prompt":PROMPT}
-    )
-
 @app.route('/query', methods=['POST'])
 def query():
     start = time.time()
@@ -112,9 +88,6 @@ def query():
     
     db = Chroma(persist_directory=CHROMA_PATH, embedding_function=OpenAIEmbeddings())
     results = db.similarity_search_with_relevance_scores(question, k=3)
-    # Check if there are any matching results or if the relevance score is too low
-    if len(results) == 0 or results[0][1] < 0.1:
-        print(f"Unable to find matching results.")
     
     # Combine context from matching documents
     context_text = "\n\n - -\n\n".join([doc.page_content for doc, _score in results])
@@ -144,3 +117,65 @@ def query():
         "response_text": response_text
     })
 
+def extract_text_from_pdf(pdf_path):
+    with pdfplumber.open(pdf_path) as pdf:
+        return "\n".join(page.extract_text() for page in pdf.pages)
+    
+def split_text_into_lines(text):
+    return text.splitlines()
+
+def compare_texts(text1, text2):
+    prompt = f"""Compare the following two texts and identify differences:
+    Text 1:
+    {text1}
+
+    Text 2:
+    {text2}
+
+    Highlight added, removed, and modified sections."""
+    
+    response = openai.ChatCompletion.create(
+        model="gpt-4",
+        messages=[{"role": "user", "content": prompt}]
+    )
+    
+    return response['choices'][0]['message']['content']
+
+def chunk_and_compare(doc1_lines, doc2_lines):
+    differences = []
+    for line1, line2 in zip(doc1_lines, doc2_lines):
+        diff = compare_texts(line1, line2)
+        differences.append(diff)
+    return differences
+
+def visualize_diff(text1, text2):
+    diff = difflib.unified_diff(
+        text1.splitlines(),
+        text2.splitlines(),
+        lineterm='',
+    )
+    return "\n".join(diff)
+
+def compare_two_documents():
+    # Paths to PDF files
+    pdf1_path = "old_version.pdf"
+    pdf2_path = "new_version.pdf"
+
+    # Step 1: Extract text
+    text1 = extract_text_from_pdf(pdf1_path)
+    text2 = extract_text_from_pdf(pdf2_path)
+
+    # Step 2: Split into lines
+    lines1 = split_text_into_lines(text1)
+    lines2 = split_text_into_lines(text2)
+
+    # Step 3: Compare and visualize
+    differences = chunk_and_compare(lines1, lines2)
+
+    # Step 4: Print or save the differences
+    response = []
+    for diff in differences:
+        print(diff)
+        response.append(diff)
+    
+    return response
