@@ -1,4 +1,3 @@
-# Langchain dependencies
 from langchain_community.document_loaders.pdf import PyPDFDirectoryLoader # Importing PDF loader from Langchain
 from langchain.text_splitter import RecursiveCharacterTextSplitter # Importing text splitter from Langchain
 from langchain_community.embeddings import OpenAIEmbeddings # Importing OpenAI embeddings from Langchain
@@ -8,11 +7,16 @@ from dotenv import load_dotenv # Importing dotenv to get API key from .env file
 from langchain_community.chat_models import ChatOpenAI # Import OpenAI LLM
 from langchain_core.prompts import ChatPromptTemplate
 
+
 import os # Importing os module for operating system functionalities
 import shutil # Importing shutil module for high-level file operations
 
 # Directory to your pdf files:
 DATA_PATH = "./data/"
+
+# Path to the directory to save Chroma database
+CHROMA_PATH = "chromaDB"
+
 def load_documents():
   """
   Load PDF documents from the specified directory using PyPDFDirectoryLoader.
@@ -57,8 +61,6 @@ def split_text(documents: list[Document]):
 
     return chunks  # Return the list of split text chunks
 
-# Path to the directory to save Chroma database
-CHROMA_PATH = "chroma"
 def save_to_chroma(chunks: list[Document]):
   """
   Save the given list of Document objects to a Chroma database.
@@ -80,7 +82,7 @@ def save_to_chroma(chunks: list[Document]):
   )
 
   # Persist the database to disk
-#   db.persist()
+  db.persist()
   print(f"Saved {len(chunks)} chunks to {CHROMA_PATH}.")
   
 def generate_data_store():
