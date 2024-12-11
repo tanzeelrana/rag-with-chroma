@@ -13,10 +13,13 @@ from werkzeug.utils import secure_filename
 from langchain_community.embeddings import OpenAIEmbeddings # Importing OpenAI embeddings from Langchain
 from langchain_community.chat_models import ChatOpenAI # Import OpenAI LLM
 from langchain_core.prompts import ChatPromptTemplate
-from openai.types.chat import ChatCompletion
+from langchain.chains import RetrievalQA
+from langchain_core.vectorstores import VectorStoreRetriever
 import openai
 import difflib
 import pdfplumber
+from langchain.prompts import PromptTemplate
+
 
 from openai import OpenAI
 client = OpenAI()
@@ -106,39 +109,78 @@ def query():
     start = time.time()
     data = request.json
     question = data.get('query')
+    relevant_docs = data.get('relevant_docs')
     if not question:
         return jsonify({"error": "Query parameter is required"}), 400
+        
     
     db = Chroma(persist_directory=CHROMA_PATH, embedding_function=OpenAIEmbeddings())
-    results = db.similarity_search_with_relevance_scores(question, k=3)
     
-    # Combine context from matching documents
-    context_text = "\n\n - -\n\n".join([doc.page_content for doc, _score in results])
+    if not relevant_docs or len(relevant_docs) == 0:
+        results = db.similarity_search(question, k=3)
+    else:
+        
+        docs = []
+        for doc in relevant_docs:
+            docs.append({"source": {"$eq": f"./upload/{doc}"}})
+        
+        if len(docs) > 1:
+            condition = {"$or": docs}
+        else:
+            condition = docs[0]
+        
+        filter_retriever = VectorStoreRetriever(
+            vectorstore=db,
+            search_type="similarity_score_threshold",
+            search_kwargs={"score_threshold":0.8, "k": 3, "filter": condition}
+        )
+        
+        retrievalQA = RetrievalQA.from_chain_type(
+            llm=ChatOpenAI(),
+            chain_type="stuff",
+            retriever=filter_retriever,
+            return_source_documents=True,
+            chain_type_kwargs={"prompt": PromptTemplate(template=PROMPT_TEMPLATE, input_variables=["context", "question"])}
+        )
+        
+        results = retrievalQA.invoke({"query": question})['source_documents']
     
-    # Create prompt template using context and query text
-    prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
-    prompt = prompt_template.format(context=context_text, question=question)
-    
-    # Initialize OpenAI chat model
-    model = ChatOpenAI()
+    if len(results) == 0:
+        end = time.time()
+        return jsonify({
+            "question": question,
+            "formatted_response": [],
+            "execution_time": end - start,
+            "response_text": "Unable to find a valid answer in the given documents"
+        })
+    else:
+        # Combine context from matching documents
+        context_text = "\n\n - -\n\n".join([doc.page_content for doc in results])
+        
+        # Create prompt template using context and query text
+        prompt_template = ChatPromptTemplate.from_template(PROMPT_TEMPLATE)
+        prompt = prompt_template.format(context=context_text, question=question)
+        
+        # Initialize OpenAI chat model
+        model = ChatOpenAI()
 
-    # Generate response text based on the prompt
-    response_text = model.predict(prompt)
-    
-    # Get sources of the matching documents
-    sources = [doc.metadata.get("source", None) for doc, _score in results]
-    
-    # Format and return response including generated text and sources
-    formatted_response = f"Response: {response_text}\nSources: {sources}"
-    
-    end = time.time()
-    
-    return jsonify({
-        "question": question,
-        "formatted_response": formatted_response,
-        "execution_time": end - start,
-        "response_text": response_text
-    })
+        # Generate response text based on the prompt
+        response_text = model.predict(prompt)
+        
+        # Get sources of the matching documents
+        sources = [doc.metadata.get("source", None) for doc in results]
+        
+        # Format and return response including generated text and sources
+        formatted_response = f"Response: {response_text}\nSources: {sources}"
+        
+        end = time.time()
+        
+        return jsonify({
+            "question": question,
+            "formatted_response": formatted_response,
+            "execution_time": end - start,
+            "response_text": response_text
+        })
 
 def extract_text_from_pdf(pdf_path):
     with pdfplumber.open(pdf_path) as pdf:
