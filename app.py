@@ -78,6 +78,25 @@ def upload_file():
         
         return jsonify({"message": "File uploaded and processed successfully"}), 200
 
+@app.route('/upload_documents', methods=['POST'])
+def upload_files():
+    if 'files[]' not in request.files:
+        return jsonify({"error": "No files part in the request"}), 400
+    
+    files = request.files.getlist('files[]')
+    if not files or all(file.filename == '' for file in files):
+        return jsonify({"error": "No selected files"}), 400
+    
+    for file in files:
+        if file and file.filename != '':
+            filename = secure_filename(file.filename)
+            file_path = os.path.join(UPLOAD_FOLDER, filename)
+            file.save(file_path)
+    
+            load_file_into_db(file_path)
+    
+    return jsonify({"message": "All files uploaded and processed successfully"}), 200
+
 @app.route('/query', methods=['POST'])
 def query():
     start = time.time()
