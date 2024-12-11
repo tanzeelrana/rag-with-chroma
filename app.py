@@ -175,11 +175,7 @@ def visualize_diff(text1, text2):
     )
     return "\n".join(diff)
 
-def compare_two_documents():
-    # Paths to PDF files
-    pdf1_path = "old_version.pdf"
-    pdf2_path = "new_version.pdf"
-
+def compare_two_documents(pdf1_path, pdf2_path):
     # Step 1: Extract text
     text1 = extract_text_from_pdf(pdf1_path)
     text2 = extract_text_from_pdf(pdf2_path)
