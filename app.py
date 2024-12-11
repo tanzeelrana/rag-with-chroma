@@ -13,6 +13,7 @@ from werkzeug.utils import secure_filename
 from langchain_community.embeddings import OpenAIEmbeddings # Importing OpenAI embeddings from Langchain
 from langchain_community.chat_models import ChatOpenAI # Import OpenAI LLM
 from langchain_core.prompts import ChatPromptTemplate
+from openai.types import ChatCompletion
 import openai
 import difflib
 import pdfplumber
@@ -153,9 +154,11 @@ def compare_texts(text1, text2):
 
     Highlight added, removed, and modified sections."""
     
-    response = openai.ChatCompletion.create(
-        model="gpt-4",
-        messages=[{"role": "user", "content": prompt}]
+    response = ChatCompletion.create(
+        model="gpt-3",
+        prompt=prompt,
+        max_tokens=500,  # Adjust as needed
+        temperature=0.7
     )
     
     return response['choices'][0]['message']['content']
@@ -188,9 +191,31 @@ def compare_two_documents(pdf1_path, pdf2_path):
     differences = chunk_and_compare(lines1, lines2)
 
     # Step 4: Print or save the differences
-    response = []
+    differences = []
     for diff in differences:
         print(diff)
-        response.append(diff)
+        differences.append(diff)
     
-    return response
+    return differences
+
+@app.route('/compare', methods=['POST'])
+def compare():
+    if 'file1' not in request.files or 'file2' not in request.files:
+        return jsonify({"error": "No files part in the request"}), 400
+    file1 = request.files['file1']
+    file2 = request.files['file2']
+    if file1.filename == '' or file2.filename == '':
+        return jsonify({"error": "No selected file"}), 400
+    if file1:
+        file1name = secure_filename(file1.filename)
+        file1_path = os.path.join(UPLOAD_FOLDER, file1name)
+        file1.save(file1_path)
+    
+    if file2:
+        file2name = secure_filename(file2.filename)
+        file2_path = os.path.join(UPLOAD_FOLDER, file2name)
+        file2.save(file2_path)
+    
+    differences = compare_two_documents(file1_path, file2_path)
+    
+    return jsonify({"differences": differences}), 200
