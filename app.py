@@ -28,7 +28,9 @@ CHROMA_PATH = os.getenv("CHROMA_PATH", "chromaDB")
 UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "./upload")
 
 PROMPT_TEMPLATE = """
-Answer the question based only on the following context:
+Use the following pieces of context to answer the question at the end. Please follow the following rules:
+    1. If you don't know the answer, don't try to make up an answer. Just say "I can't find the final answer but you may want to check the following links".
+    2. If you find the answer, write the answer in a concise way with five sentences maximum.
 {context}
  - -
 Answer the question based on the above context: {question}
@@ -109,7 +111,7 @@ def query():
         return jsonify({"error": "Query parameter is required"}), 400
     
     db = Chroma(persist_directory=CHROMA_PATH, embedding_function=OpenAIEmbeddings())
-    results = db.similarity_search_with_relevance_scores(question, k=3, score_threshold=0.1)
+    results = db.similarity_search_with_relevance_scores(question, k=3)
     # Check if there are any matching results or if the relevance score is too low
     if len(results) == 0 or results[0][1] < 0.1:
         print(f"Unable to find matching results.")
