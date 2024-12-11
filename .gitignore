@@ -1,3 +1,6 @@
 rag-with-chroma
 .env
 chromaDB
+data
+upload
+__pycache__

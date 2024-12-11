@@ -98,7 +98,7 @@ load_dotenv()
 # Generate the data store
 generate_data_store()
 
-query_text = "Explain how the YOLO method works"
+query_text = "select right component for power circuit with input 10 volt and output of 20 volt and output current of 100 mA?"
 
 PROMPT_TEMPLATE = """
 Answer the question based only on the following context:
