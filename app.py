@@ -1,8 +1,5 @@
 from flask import Flask, request, jsonify
 import os
-import numpy as np
-from langchain_community.embeddings import HuggingFaceBgeEmbeddings
-from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores.chroma import Chroma
 from langchain_core.prompts import ChatPromptTemplate
@@ -16,10 +13,9 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain.chains import RetrievalQA
 from langchain_core.vectorstores import VectorStoreRetriever
 import openai
-import difflib
 import pdfplumber
 from langchain.prompts import PromptTemplate
-
+from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline, TextStreamer
 
 from openai import OpenAI
 client = OpenAI()
@@ -28,7 +24,6 @@ load_dotenv()
 
 app = Flask(__name__)
 
-openai.api_key = os.getenv("OPENAI_API_KEY")
 CHROMA_PATH = os.getenv("CHROMA_PATH", "chromaDB")  
 UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "./upload")
 
@@ -45,7 +40,13 @@ if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
 
 # Initialize OpenAI chat model
-model = ChatOpenAI()
+model = AutoModelForCausalLM.from_pretrained(
+    "jpacifico/Chocolatine-3B-Instruct-DPO-Revised",
+    device_map="cuda",
+    torch_dtype="auto",
+    trust_remote_code=True,
+)
+tokenizer = AutoTokenizer.from_pretrained("jpacifico/Chocolatine-3B-Instruct-DPO-Revised") 
 
 def split_documents(file_path):
     loader = PyPDFLoader(file_path)
@@ -186,18 +187,36 @@ def extract_text_from_pdf(pdf_path):
     with pdfplumber.open(pdf_path) as pdf:
         return "\n".join(page.extract_text() for page in pdf.pages)
 
+def generate_response(prompt, max_new_tokens=500, temperature=0.0):
+    messages = [
+        {"role": "system", "content": "You are an AI assistant named Chocolatine. Your mission is to provide reliable, ethical, and accurate information to the user."},
+        {"role": "user", "content": prompt},
+    ]
+    pipe = pipeline(
+    "text-generation",
+    model=model,
+    tokenizer=tokenizer,
+    )
+
+    generation_args = {
+        "max_new_tokens": max_new_tokens,
+        "return_full_text": False,
+        "temperature": temperature,
+        "do_sample": False,
+    }
+
+    output = pipe(messages, **generation_args)
+    return output[0]['generated_text']
+
 def compare_texts(context):
     prompt = f"""Compare the following texts and identify differences:
     {context}
 
     Highlight added, removed, and modified sections. Response text should be html format."""
     
-    response = client.chat.completions.create(
-        model="gpt-4o",
-        messages=[{"role": "system", "content": prompt}]
-    )
+    response = generate_response(prompt)
     
-    return response.choices[0].message.content
+    return response
 
 def compare_documents(file_paths):
     
