@@ -1,8 +1,5 @@
 from flask import Flask, request, jsonify
 import os
-import numpy as np
-from langchain_community.embeddings import HuggingFaceBgeEmbeddings
-from langchain_community.document_loaders import PyPDFDirectoryLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores.chroma import Chroma
 from langchain_core.prompts import ChatPromptTemplate
@@ -16,10 +13,8 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain.chains import RetrievalQA
 from langchain_core.vectorstores import VectorStoreRetriever
 import openai
-import difflib
 import pdfplumber
 from langchain.prompts import PromptTemplate
-
 
 from openai import OpenAI
 client = OpenAI()
@@ -34,8 +29,9 @@ UPLOAD_FOLDER = os.getenv("UPLOAD_FOLDER", "./upload")
 
 PROMPT_TEMPLATE = """
 Use the following pieces of context to answer the question at the end. Please follow the following rules:
-    1. If you don't know the answer, don't try to make up an answer and don't share the related source document links.
-    2. If you find the answer, write the answer in a concise way with five sentences maximum and also share the related document links.
+    1. If you don't know the answer, don't try to make up an answer.
+    2. If you find the answer, write a detailed answer in an HTML format and do not skip any information in the answer.
+    3. If the question asks about comparing something, make sure to compare everything and also provide a detailed comparison table in HTML format and do not skip any information in the answer.
 {context}
  - -
 Answer the question based on the above context: {question}
@@ -51,8 +47,8 @@ def split_documents(file_path):
     loader = PyPDFLoader(file_path)
     docs_before_split = loader.load()
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=400,  # Size of each chunk in characters
-        chunk_overlap=100,  # Overlap between consecutive chunks
+        chunk_size=800,  # Size of each chunk in characters
+        chunk_overlap=50,  # Overlap between consecutive chunks
         length_function=len,  # Function to compute the length of the text
         add_start_index=True,  # Flag to add start index to each chunk
     )
@@ -117,7 +113,7 @@ def query():
     db = Chroma(persist_directory=CHROMA_PATH, embedding_function=OpenAIEmbeddings())
     
     if not relevant_docs or len(relevant_docs) == 0:
-        results = db.similarity_search(question, k=3)
+        results = db.similarity_search(question, k=50)
     else:
         
         docs = []
@@ -132,18 +128,9 @@ def query():
         filter_retriever = VectorStoreRetriever(
             vectorstore=db,
             search_type="similarity_score_threshold",
-            search_kwargs={"score_threshold":0.8, "k": 3, "filter": condition}
+            search_kwargs={"score_threshold":0.01, "filter": condition, "k": 50}
         )
-        
-        retrievalQA = RetrievalQA.from_chain_type(
-            llm=ChatOpenAI(),
-            chain_type="stuff",
-            retriever=filter_retriever,
-            return_source_documents=True,
-            chain_type_kwargs={"prompt": PromptTemplate(template=PROMPT_TEMPLATE, input_variables=["context", "question"])}
-        )
-        
-        results = retrievalQA.invoke({"query": question})['source_documents']
+        results = filter_retriever.get_relevant_documents(question)
     
     if len(results) == 0:
         end = time.time()
@@ -162,7 +149,7 @@ def query():
         prompt = prompt_template.format(context=context_text, question=question)
         
         # Initialize OpenAI chat model
-        model = ChatOpenAI()
+        model = ChatOpenAI(max_tokens=4096, temperature=0, stop=["\nSources:"])
 
         # Generate response text based on the prompt
         response_text = model.predict(prompt)
